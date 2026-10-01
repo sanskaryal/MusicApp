@@ -1,0 +1,64 @@
+import { test, expect } from '@playwright/test';
+
+async function navigate(page, label) {
+  const menu = page.getByLabel('Open navigation');
+  if (await menu.isVisible()) await menu.click();
+  await page.getByRole('button', { name: label, exact: false }).first().click();
+}
+
+test('search, download, play, persist likes and playlists, and manage queue', async ({ page }, testInfo) => {
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'A little more rhythm.' })).toBeVisible();
+  await page.screenshot({ path: `../../docs/screenshots/${testInfo.project.name}.png`, fullPage: true });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.getByLabel('Search YouTube').fill('test music');
+  await page.getByLabel('Submit search').click();
+  await expect(page.getByLabel('Play Ocean lights')).toBeVisible();
+  await page.getByLabel('Play Ocean lights').click();
+  await expect.poll(() => page.locator('audio').evaluate(el => el.currentTime), { timeout: 12000 }).toBeGreaterThan(0);
+  await page.getByRole('button', { name: 'Pause', exact: true }).click();
+  await expect.poll(() => page.locator('audio').evaluate(el => el.paused)).toBe(true);
+  await page.getByLabel('Seek', { exact: true }).fill('5');
+  await expect.poll(() => page.locator('audio').evaluate(el => el.currentTime)).toBeGreaterThanOrEqual(4.9);
+  if (await page.getByLabel('Like Ocean lights', { exact: true }).count()) await page.getByLabel('Like Ocean lights', { exact: true }).click();
+  await expect(page.getByLabel('Unlike Ocean lights', { exact: true })).toBeVisible();
+  await page.getByLabel('Add Ocean lights to queue').click();
+  await page.getByLabel('Add Sunday slow to queue').click();
+  await navigate(page, 'Create playlist');
+  await page.getByLabel('Playlist name').fill(`Night drive ${testInfo.project.name}`);
+  await page.getByRole('dialog').getByRole('button', { name: 'Create playlist', exact: true }).click();
+  await expect(page.getByRole('heading', { name: `Night drive ${testInfo.project.name}` })).toBeVisible();
+  await page.getByLabel('Search YouTube').fill('test music');
+  await page.getByLabel('Submit search').click();
+  await page.getByLabel('Add Ocean lights to playlist').click();
+  await page.getByRole('dialog').getByRole('button', { name: new RegExp(`Night drive ${testInfo.project.name}`) }).click();
+  await page.reload();
+  await navigate(page, `Night drive ${testInfo.project.name}`);
+  await expect(page.getByLabel('Play Ocean lights')).toBeVisible();
+  await page.getByLabel('Rename playlist').click();
+  await page.getByLabel('Playlist name').fill(`Renamed ${testInfo.project.name}`);
+  await page.getByRole('button', { name: 'Save name' }).click();
+  await expect(page.getByRole('heading', { name: `Renamed ${testInfo.project.name}` })).toBeVisible();
+  await page.getByLabel('Remove Ocean lights from playlist').click();
+  await expect(page.getByText('Every playlist starts somewhere')).toBeVisible();
+  await page.getByLabel('Delete playlist', { exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Delete playlist' }).click();
+  await navigate(page, 'Liked songs');
+  await expect(page.getByLabel('Play Ocean lights')).toBeVisible();
+  await navigate(page, 'Play queue');
+  await page.getByLabel('Move Sunday slow up').click();
+  await expect(page.locator('.track-row').first()).toContainText('Sunday slow');
+  await page.getByLabel('Move Sunday slow down').click();
+  await expect(page.locator('.track-row').first()).toContainText('Ocean lights');
+  await page.getByLabel('Play Ocean lights').click();
+  await page.getByLabel('Next song', { exact: true }).click();
+  await expect(page.locator('.now-playing strong')).toHaveText('Sunday slow');
+  await expect.poll(() => page.locator('audio').evaluate(el => el.currentTime), { timeout: 12000 }).toBeGreaterThan(0);
+  await page.getByLabel('Remove Sunday slow from queue').click();
+  await page.getByRole('button', { name: 'Clear queue' }).click();
+  await expect(page.getByText('A good session starts with a song')).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  expect(errors).toEqual([]);
+});

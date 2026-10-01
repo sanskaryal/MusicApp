@@ -1,0 +1,307 @@
+openapi: 3.1.0
+info:
+  title: Cadence local music API
+  version: 1.0.0
+  description: Single-user local library. Mutations accept same-origin JSON; no authentication. Never expose publicly.
+servers:
+  - url: http://127.0.0.1:8765
+paths:
+  /api/health:
+    get:
+      operationId: health
+      responses:
+        '200':
+          description: Server health and executable availability
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, yt_dlp, ffmpeg]
+                properties:
+                  status: {type: string, const: ok}
+                  yt_dlp: {type: boolean}
+                  ffmpeg: {type: boolean}
+  /api/state:
+    get:
+      operationId: getState
+      responses:
+        '200': {$ref: '#/components/responses/State'}
+  /api/search:
+    get:
+      operationId: searchYouTube
+      parameters:
+        - in: query
+          name: q
+          required: true
+          schema: {type: string, minLength: 1, maxLength: 200}
+      responses:
+        '200':
+          description: Up to sixteen normalized YouTube results, excluding live streams and items over two hours
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tracks]
+                properties:
+                  tracks:
+                    type: array
+                    items: {$ref: '#/components/schemas/TrackInput'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/downloads:
+    post:
+      operationId: downloadTrack
+      description: Start or reuse a background MP3 download. Poll state for queued, downloading, ready or error. Retry by posting again. Maximum twenty pending jobs, two concurrent workers.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TrackInput'}
+      responses:
+        '200':
+          description: Current track and download status
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Track'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/likes:
+    post:
+      operationId: setLiked
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [track, liked]
+              properties:
+                track: {$ref: '#/components/schemas/TrackInput'}
+                liked: {type: boolean}
+      responses:
+        '200': {$ref: '#/components/responses/State'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/queue:
+    post:
+      operationId: appendQueue
+      requestBody: {$ref: '#/components/requestBodies/TrackWrapper'}
+      responses:
+        '200': {$ref: '#/components/responses/State'}
+        default: {$ref: '#/components/responses/Error'}
+    put:
+      operationId: reorderQueue
+      description: IDs must contain the exact current queue entry set. Stale sets return 409.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids]
+              properties:
+                ids:
+                  type: array
+                  uniqueItems: true
+                  items: {type: string, pattern: '^[a-f0-9]{32}$'}
+      responses:
+        '200': {$ref: '#/components/responses/State'}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: clearQueue
+      responses:
+        '200': {$ref: '#/components/responses/State'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/queue/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/CollectionId'}
+    delete:
+      operationId: removeQueueEntry
+      responses:
+        '200': {$ref: '#/components/responses/State'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/playlists:
+    post:
+      operationId: createPlaylist
+      requestBody: {$ref: '#/components/requestBodies/PlaylistName'}
+      responses:
+        '200': {$ref: '#/components/responses/State'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/playlists/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/CollectionId'}
+    patch:
+      operationId: renamePlaylist
+      requestBody: {$ref: '#/components/requestBodies/PlaylistName'}
+      responses:
+        '200': {$ref: '#/components/responses/State'}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: deletePlaylist
+      description: Delete playlist membership, retaining tracks and downloads.
+      responses:
+        '200': {$ref: '#/components/responses/State'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/playlists/{id}/tracks:
+    parameters:
+      - {$ref: '#/components/parameters/CollectionId'}
+    post:
+      operationId: addPlaylistTrack
+      description: Append a track unless it is already in the playlist.
+      requestBody: {$ref: '#/components/requestBodies/TrackWrapper'}
+      responses:
+        '200': {$ref: '#/components/responses/State'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/playlists/{id}/tracks/{trackId}:
+    parameters:
+      - {$ref: '#/components/parameters/CollectionId'}
+      - {$ref: '#/components/parameters/TrackId'}
+    delete:
+      operationId: removePlaylistTrack
+      responses:
+        '200': {$ref: '#/components/responses/State'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/audio/{trackId}:
+    parameters:
+      - {$ref: '#/components/parameters/TrackId'}
+      - in: header
+        name: Range
+        schema: {type: string}
+        description: Optional single byte range, such as bytes=0-1023 or bytes=-1024
+    get:
+      operationId: streamAudio
+      responses:
+        '200': {$ref: '#/components/responses/Audio'}
+        '206': {$ref: '#/components/responses/Audio'}
+        '416':
+          description: Invalid range; no response body
+          headers:
+            Content-Range:
+              schema: {type: string}
+              description: 'bytes */<file size>'
+        default: {$ref: '#/components/responses/Error'}
+    head:
+      operationId: audioHeaders
+      responses:
+        '200':
+          description: Audio headers with no body
+          headers:
+            Content-Length:
+              schema: {type: integer}
+            Accept-Ranges:
+              schema: {type: string, const: bytes}
+        '206':
+          description: Partial audio headers with no body
+          headers:
+            Content-Range:
+              schema: {type: string}
+        '416':
+          description: Invalid range, no body
+        default:
+          description: Error status with no body
+components:
+  parameters:
+    CollectionId:
+      in: path
+      name: id
+      required: true
+      schema: {type: string, pattern: '^[a-f0-9]{32}$'}
+    TrackId:
+      in: path
+      name: trackId
+      required: true
+      schema: {type: string, pattern: '^[A-Za-z0-9_-]{11}$'}
+  requestBodies:
+    TrackWrapper:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [track]
+            properties:
+              track: {$ref: '#/components/schemas/TrackInput'}
+    PlaylistName:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [name]
+            properties:
+              name: {type: string, minLength: 1, maxLength: 80}
+  responses:
+    State:
+      description: Complete persistent library snapshot
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/State'}
+    Error:
+      description: Validation (400), origin (403), missing resource (404), conflict (409), size (413), media type (415), busy (429), internal (500), upstream (502), unavailable dependency (503), or timeout (504)
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error]
+            properties:
+              error: {type: string}
+    Audio:
+      description: Local MP3 bytes, with partial content for Range requests
+      headers:
+        Accept-Ranges:
+          schema: {type: string, const: bytes}
+        Content-Length:
+          schema: {type: integer}
+        Content-Range:
+          schema: {type: string}
+          description: Present for partial content
+      content:
+        audio/mpeg:
+          schema: {type: string, format: binary}
+  schemas:
+    TrackInput:
+      type: object
+      required: [id, title]
+      properties:
+        id: {type: string, pattern: '^[A-Za-z0-9_-]{11}$'}
+        title: {type: string, minLength: 1, maxLength: 500}
+        artist: {type: string, maxLength: 300, default: YouTube}
+        duration: {type: number, minimum: 0, maximum: 7200, default: 0}
+        thumbnail:
+          type: string
+          description: Derived by the server from the video ID; supplied URLs are ignored
+    Track:
+      allOf:
+        - {$ref: '#/components/schemas/TrackInput'}
+        - type: object
+          required: [liked, status, error, created_at]
+          properties:
+            liked: {type: integer, enum: [0, 1]}
+            status: {type: string, enum: [idle, queued, downloading, ready, error]}
+            error: {type: [string, 'null']}
+            created_at: {type: number}
+    State:
+      type: object
+      required: [tracks, queue, playlists]
+      properties:
+        tracks:
+          type: array
+          items: {$ref: '#/components/schemas/Track'}
+        queue:
+          type: array
+          items:
+            type: object
+            required: [id, track_id, position]
+            properties:
+              id: {type: string}
+              track_id: {type: string}
+              position: {type: integer}
+        playlists:
+          type: array
+          items:
+            type: object
+            required: [id, name, created_at, track_ids]
+            properties:
+              id: {type: string}
+              name: {type: string}
+              created_at: {type: number}
+              track_ids:
+                type: array
+                items: {type: string}
